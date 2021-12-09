@@ -1,3 +1,4 @@
 06e7e34e-63ff-4d8b-a433-b16403f3a89f archive-id=b02e63c2-62c1-11e9-82b0-52540040489c autoenable=true encryption=none externaltype=ora name=ria-beluga-storage type=external url=ria+file:///project/rrg-pbellec/ria-beluga/ timestamp=1632324155.625288s
 58140b89-2abc-43eb-b89e-7c4cd82acab2 autoenable=true encryption=none externaltype=datalad name=datalad type=external timestamp=1615853980.990553014s
 71c620b5-997f-4849-bb30-c42dbb48a51e autoenable=true location=http://datasets.datalad.org/repronim/containers/.git name=datasets.datalad.org type=git timestamp=1563389624.584709579s
+b1e9b12f-4ce1-45b8-b9f6-091482f07489 archive-id=b02e63c2-62c1-11e9-82b0-52540040489c autoenable=true encryption=none externaltype=ora name=ria-narval-storage type=external url=ria+ssh://narval.computecanada.ca/project/def-pbellec/ria-narval timestamp=1639078478.621165492s
