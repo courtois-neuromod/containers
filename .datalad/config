@@ -68,7 +68,7 @@
 	updateurl = shub://ReproNim/containers:bids-mriqc--0.16.1
 [datalad "containers.bids-mrtrix3-connectome"]
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
-	image = images/bids/bids-mrtrix3-connectome--0.5.0.sing
+	image = images/bids/bids-mrtrix3-connectome--0.5.1.sing
 	updateurl = shub://ReproNim/containers:bids-mrtrix3-connectome--0.4.2
 [datalad "containers.bids-ndmg"]
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
@@ -104,7 +104,7 @@
 	updateurl = shub://ReproNim/containers:bids-tracula--6.0.0.beta-0
 [datalad "containers.bids-validator"]
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
-	image = images/bids/bids-validator--1.8.1-dev.0.sing
+	image = images/bids/bids-validator--1.9.2.sing
 	updateurl = shub://ReproNim/containers:bids-validator--1.5.4
 [datalad "containers.neuronets-kwyk"]
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
@@ -146,15 +146,18 @@
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
 [datalad "containers.bids-connectomemapper-bidsapp"]
 	updateurl = shub://ReproNim/containers:bids-connectomemapper-bidsapp--3.0.0-diffcourse
-	image = images/bids/bids-connectomemapper-bidsapp--3.0.0-diffcourse.sing
+	image = images/bids/bids-connectomemapper-bidsapp--3.0.3.sing
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
 [datalad "containers.adswa-nilearn"]
 	updateurl = shub://adswa/nilearn-container
 	image = images/adswa/adswa-nilearn--latest.sing
 	cmdexec = {img_dspath}/scripts/singularity_cmd exec {img} {cmd}
 [datalad "containers.bids-mialsuperresolutiontoolkit"]
-	image = images/bids/bids-mialsuperresolutiontoolkit--2.0.1.sing
+	image = images/bids/bids-mialsuperresolutiontoolkit--2.0.3.sing
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
 [datalad "containers.bids-hippunfold"]
-	image = images/bids/bids-hippunfold--0.5.11.sing
+	image = images/bids/bids-hippunfold--1.0.0.sing
+	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
+[datalad "containers.bids-micapipe"]
+	image = images/bids/bids-micapipe--0.0.1.sing
 	cmdexec = {img_dspath}/scripts/singularity_cmd run {img} {cmd}
