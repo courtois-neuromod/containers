@@ -172,14 +172,14 @@ datalad run -m "Downgrade/Freeze mriqc container version" \
 # hardcode for mriqc to workaround an issue. So let's remove it
 datalad run -m "Remove ad-hoc option for mriqc for older frozen version" sed -i -e 's, --no-datalad-get,,g' .datalad/config
 # Install input data:
-datalad install -d . -s https://github.com/ReproNim/ds000003-demo sourcedata
+datalad install -d . -s https://github.com/ReproNim/ds000003-demo sourcedata/raw
 # Setup git to ignore workdir to be used by pipelines
 echo "workdir/" > .gitignore && datalad save -m "Ignore workdir" .gitignore
 # Execute desired preprocessing while creating a provenance record
 # in git history
 datalad containers-run \
         -n bids-mriqc \
-        --input sourcedata \
+        --input sourcedata/raw \
         --output . \
         '{inputs}' '{outputs}' participant group -w workdir
 )
@@ -207,7 +207,7 @@ data, code, and anything else we need to run the analysis.
 Install the input dataset:
 
 ```bash
-datalad install -d . -s https://github.com/ReproNim/ds000003-demo sourcedata
+datalad install -d . -s https://github.com/ReproNim/ds000003-demo sourcedata/raw
 ```
 
 Next we install the `ReproNim/containers` collection.
@@ -219,12 +219,12 @@ datalad install -d . -s ///repronim/containers code/containers
 Now let's take a look at what we have.
 
 ```
-/ds000003-qc # The root dataset contains everything
- |--/sourcedata # we call it source, but it is actually ds000003-demo
- |--/code/containers # repronim/containers, this is where our non-custom code lives
+ds000003-qc/  # The root dataset contains everything
+ |- sourcedata/
+ |  \- raw/  # we call it source, but it is actually ds000003-demo "raw" BIDS dataset
+ \- code/
+    \- containers/  # repronim/containers, this is where our non-custom code lives
 ```
-
-TODO -- update whenever version above shown to do what is desired.
 
 ### Freezing Container Image Versions
 
@@ -289,7 +289,7 @@ Now we use `datalad containers-run` to perform the analysis.
 ```bash
 datalad containers-run \
         -n bids-mriqc \
-        --input sourcedata \
+        --input sourcedata/raw \
         --output . \
         '{inputs}' '{outputs}' participant group -w workdir
 ```
@@ -316,7 +316,7 @@ Date:   Wed Jun 5 15:41:59 2024 -0400
       "code/containers/images/bids/bids-mriqc--0.16.0.sing"
      ],
      "inputs": [
-      "sourcedata"
+      "sourcedata/raw"
      ],
      "outputs": [
       "."
@@ -328,7 +328,7 @@ Date:   Wed Jun 5 15:41:59 2024 -0400
 
 This record could later be reused (by anyone) using [datalad rerun] to rerun
 this computation using exactly the same version(s) of input data and the
-singularity container. You can even now [datalad uninstall] sourcedata and even containers
+singularity container. You can even now [datalad uninstall] sourcedata/raw and even containers
 sub-datasets to save space - they will be retrievable at those exact versions later
 on if you need to extend or redo your analysis.
 

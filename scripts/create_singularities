@@ -31,11 +31,21 @@
 #
 #    will consider only two images - one for poldracklab and another one
 #    bids/validator, the other ones will be reported skipped
+#
+#  - you can use --image-groups/-i to specify specific groups or images to build:
+#
+#    scripts/create_singularities -i bids-apps -i neurodesk
+#    scripts/create_singularities -i repronim/reproin -i bids/validator
+#    scripts/create_singularities -i repronim
+#
+#    Available groups: bids-apps, neurodesk, repronim, brainiak, neuronets, poldrack
+#    You can also specify individual image names
 
 from __future__ import annotations
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 import click
+import json
 import logging
 import os
 from pathlib import Path
@@ -130,8 +140,7 @@ class Builder:
 
         Following https://github.com/ReproNim/containers/issues/64#issuecomment-1418301696
         """
-        r = requests.get(f"https://raw.githubusercontent.com/NeuroDesk/neurocommand/main/cvmfs/log.txt")
-        r.raise_for_status()
+        r = retry_get(f"https://raw.githubusercontent.com/NeuroDesk/neurocommand/main/cvmfs/log.txt")
         # look like afni_21.2.00_20210714 categories:functional imaging,
         # for now we disregard the metadata
         for l in r.text.splitlines():
@@ -154,21 +163,72 @@ class Builder:
         # datalad-container one only to the latest version.
         # For the others -- check if image file exists and if not -- add
         all_imgs = list(self.get_neurodesk_images())[::-1]
+        if len(all_imgs) < 100:
+            raise AssertionError(
+                "Expected at least 100 NeuroDesk images, got %d" % len(all_imgs)
+            )
 
         ds = dl.Dataset(self.repo_dir)
         outdir = self.images_dir / 'neurodesk'
         outdir.mkdir(parents=True, exist_ok=True)
 
+        existing_img_files = list(outdir.glob("*.simg"))
+        known_img_files = []
         prior_img = None
         added, registered = [], 0
         for img in all_imgs:
             log.info("neurodesk <- singularity %s", img.container)
             imagefile = Path(str(outdir / get_imagename(img.name, 'neurodesk', img.version)) + ".simg")
-            if not (imagefile.exists() or imagefile.is_symlink()):
+            known_img_files.append(imagefile)
+
+            to_download = False
+            if (imagefile.exists() or imagefile.is_symlink()):
+                # We need to check if it is actually coming from the same URL, as URL
+                # might change, e.g. if they change the image to a newer/fixed one
+                # which would be reflected in the date component which is not in the version :-/
+
+                # Check which URLs are registered within git-annex for imagefile
+                whereis_result = self.runcmd(
+                    "git", "annex", "whereis", "--json", str(imagefile),
+                    capture_output=True, text=True
+                )
+                whereis_data = json.loads(whereis_result.stdout)
+
+                # Get URLs from web remote
+                web_urls = []
+                for remote in whereis_data.get('whereis', []):
+                    if remote.get('uuid') == '00000000-0000-0000-0000-000000000001':  # web remote
+                        web_urls = remote.get('urls', [])
+                        break
+
+                # Check if any of the current img.urls match the registered web URLs
+                url_match_found = set(web_urls).intersection(img.urls)
+
+                if not url_match_found and web_urls:
+                    # URLs have changed, need to unregister old ones and re-download
+                    log.info("URLs for %s have changed, unregistering old URLs", img.container)
+                    key = whereis_data.get('key')
+                    if key:
+                        for old_url in web_urls:
+                            self.runcmd(
+                                "git", "annex", "unregisterurl",
+                                "-c", "annex.alwayscommit=false",
+                                key, old_url
+                            )
+                    to_download = True
+                elif not web_urls:
+                    # No URLs registered, need to register them
+                    log.info("No URLs registered for %s, will register", img.container)
+                    to_download = True
+            else:
+                to_download = True
+
+            if to_download:
                 out = dl.download_url(
                     img.urls[0],
                     path=imagefile,
-                    save=False
+                    save=False,
+                    overwrite=True,
                 )
                 key = ds.repo.add(str(imagefile))['key']
                 for url in img.urls:
@@ -177,6 +237,8 @@ class Builder:
                         key, url
                     )
                 added.append(str(imagefile))
+
+                # Register container with datalad if this is the first/latest version of this image
                 if img.name != prior_img:
                     prior_img = img.name
                     registered += 1
@@ -195,6 +257,14 @@ class Builder:
             ds.repo.set_metadata(files=added, add={'distribution-restrictions': 'out-of-space'})
             ds.save(path=added,
                     message=f"Add {len(added)} NeuroDesk images with {registered} registered")
+        if (stale_img_files := set(existing_img_files).difference(known_img_files)):
+            for stale_img_file in stale_img_files:
+                log.warning(
+                    "Stale NeuroDesk image file %s found, removing it", stale_img_file
+                )
+                stale_img_file.unlink()
+            ds.save(path=stale_img_files,
+                    message=f"Remove {len(stale_img_files)} stale NeuroDesk images")
 
     def create_singularity_file(
         self, dh: str, version_tag: str, version_pure: str, family: str,
@@ -293,7 +363,7 @@ export LC_ALL="C.UTF-8"
             # the previous version of the container
 
     def generate_singularity_for_docker_image(self, githubid: str, family: Optional[str]=None,
-                                              only_good_versions: bool=False, 
+                                              only_good_versions: bool=False,
                                               version_regex: Optional[str]=None,
                                               familysuf: Optional[str]=None,
                                               ) \
@@ -388,8 +458,10 @@ def get_imagename(repoid: str, family: str, versiontag: str, familysuf: Optional
 
 @click.command()
 @click.option("--push", is_flag=True, show_default=True, default=False, help="Push upon completion.")
+@click.option("--image-groups", "-i", multiple=True, help="Specific image groups or individual images to build. Can be used multiple times.")
+@click.option("--no-singularity-check", is_flag=True, show_default=True, default=False, help="Disable checking the version of singularity.")
 @click.argument("githubids", nargs=-1, default=None)
-def main(push: bool, githubids: list[str]|None) -> None:
+def main(push: bool, image_groups: tuple[str, ...], no_singularity_check: bool, githubids: list[str]|None) -> None:
     logging.basicConfig(format="[%(levelname)-8s] %(message)s", level=logging.INFO)
 
     # Use local dedicated "tmp/" directory since any other might be too small
@@ -405,69 +477,97 @@ def main(push: bool, githubids: list[str]|None) -> None:
     # We are still using elderly singularity 2.6.1 to build images, so elderly
     # singularity could run images we generate, since images produced by 3
     # seems to not be usable with 2.
-    rc = subprocess.run(
-        ["singularity", "--version"],
-        check=True,
-        stdout=subprocess.PIPE,
-        universal_newlines=True,
-    )
-    if "2.6.1" not in rc.stdout:
-        log.error("singularity is 'too new'")
-        sys.exit(1)
+    if not no_singularity_check:
+        rc = subprocess.run(
+            ["singularity", "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            universal_newlines=True,
+        )
+        if "2.6.1" not in rc.stdout:
+            log.error("singularity is 'too new'")
+            sys.exit(1)
 
-    r = requests.get(
-        "https://raw.githubusercontent.com/bids-standard/bids-website/main/data/tools/apps.yml"
-    )
-    r.raise_for_status()
-    for line in r.text.splitlines():
-        m = re.match(r" *dh:\s+(\S+)", line.rstrip("\n\r"))
-        if m:
-            dockerhubid = re.sub(r"[\"']", "", m[1])
-            if "micalab/micapipe" not in dockerhubid:
-                builder.generate_singularity_for_docker_image(dockerhubid, "bids")
+    # Determine which images/groups to build
+    requested_groups = set(image_groups) if image_groups else set()
+    build_all = not requested_groups
+
+    # Helper function to check if we should build an image
+    def should_build(group_name: str, image_name: Optional[str] = None) -> bool:
+        if build_all:
+            return True
+        if group_name in requested_groups:
+            return True
+        if image_name and image_name in requested_groups:
+            return True
+        return False
+
+    # Build BIDS apps
+    if should_build('bids-apps'):
+        r = retry_get(
+            "https://raw.githubusercontent.com/bids-standard/bids-website/main/data/tools/apps.yml"
+        )
+        for line in r.text.splitlines():
+            m = re.match(r" *dh:\s+(\S+)", line.rstrip("\n\r"))
+            if m:
+                dockerhubid = re.sub(r"[\"']", "", m[1])
+                if "micalab/micapipe" not in dockerhubid:
+                    builder.generate_singularity_for_docker_image(dockerhubid, "bids")
+
+        # LTS releases for some bids-apps. TODO later may be: check for having ALL versions
+        builder.generate_singularity_for_docker_image("nipreps/fmriprep", version_regex=r"^v?20\.2\.[0-9]+$", family="bids", familysuf="20-2")
 
     # validator is not bids-app but we will stick it along with bids
-    builder.generate_singularity_for_docker_image("bids/validator")
-    # LTS releases for some bids-apps. TODO later may be: check for having ALL versions
-    builder.generate_singularity_for_docker_image("nipreps/fmriprep", version_regex=r"^v?20\.2\.[0-9]+$", family="bids", familysuf="20-2")
+    if should_build('bids-apps', 'bids/validator'):
+        builder.generate_singularity_for_docker_image("bids/validator")
 
     # Additional ones from Poldrack
-    builder.generate_singularity_for_docker_image("poldracklab/ds003-example")
+    if should_build('poldrack', 'poldracklab/ds003-example'):
+        builder.generate_singularity_for_docker_image("poldracklab/ds003-example")
 
     #
     # ReproNim
     #
+    if should_build('repronim', 'repronim/reproin'):
+        # "Native" Singularity image for ReproIn
+        # TODO: figure out who would build those now that shub is gone?!
+        # ATM: built locally and pushed to docker hub... so let's build from those
+        builder.generate_singularity_for_docker_image("repronim/reproin")
+    
+    if should_build('repronim', 'repronim/reprostim'):
+        builder.generate_singularity_for_docker_image("repronim/reprostim")
 
-    # "Native" Singularity image for ReproIn
-    # TODO: figure out who would build those now that shub is gone?!
-    # ATM: built locally and pushed to docker hub... so let's build from those
-    builder.generate_singularity_for_docker_image("repronim/reproin")
+    if should_build('repronim', 'nipy/heudiconv'):
+        # nipy/heudiconv
+        builder.generate_singularity_for_docker_image("nipy/heudiconv")
 
-    # nipy/heudiconv
-    builder.generate_singularity_for_docker_image("nipy/heudiconv")
-
-    # Docker image for simple_workflow
-    builder.generate_singularity_for_docker_image("ReproNim/simple_workflow")
+    if should_build('repronim', 'ReproNim/simple_workflow'):
+        # Docker image for simple_workflow
+        builder.generate_singularity_for_docker_image("ReproNim/simple_workflow")
 
     # neuronets
-    builder.generate_singularity_for_docker_image("neuronets/kwyk")
+    if should_build('neuronets', 'neuronets/kwyk'):
+        builder.generate_singularity_for_docker_image("neuronets/kwyk")
 
     # Jeremy Magland images, to try out dendro
     # Seems to be 404ing https://github.com/scratchrealm/pc-spike-sorting/issues/10
-    #builder.generate_singularity_for_docker_image("magland/pc-mountainsort5")
-    #builder.generate_singularity_for_docker_image("magland/pc-kilosort3")
+    #if should_build('magland'):
+    #    builder.generate_singularity_for_docker_image("magland/pc-mountainsort5")
+    #    builder.generate_singularity_for_docker_image("magland/pc-kilosort3")
 
     # Entire organization
     # Some purely "latest" give us troubles. Let them tag
-    builder.generate_singularity_for_docker_namespace("brainiak", only_good_versions=True)
+    if should_build('brainiak'):
+        builder.generate_singularity_for_docker_namespace("brainiak", only_good_versions=True)
 
     # Custom: neurodesk singularity images
     # TODO: update URLs for all existing to not have oraclecloud.com ones and only new
     # https://d15yxasja65rk8.cloudfront.net ones
-    builder.add_neurodesk_singularity_images()
+    if should_build('neurodesk'):
+        builder.add_neurodesk_singularity_images()
 
-    builder.runcmd("git", "pull")  # to possibly merge remote changes
     if push:
+        builder.runcmd("git", "pull")  # to possibly merge remote changes
         builder.runcmd("datalad", "push", "--data=auto")  # so we share with the world
 
 
@@ -479,15 +579,18 @@ def retry_get(url: str) -> requests.Response:
             r.raise_for_status()
             return r
         except (requests.ConnectionError, requests.HTTPError, requests.Timeout) as e:
-            if (
-                isinstance(e, requests.HTTPError)
-                and e.response is not None and e.response.status_code < 500
-            ):
-                raise e
+            # Retry on connection errors, timeouts, and specific HTTP errors
+            if isinstance(e, requests.HTTPError) and e.response is not None:
+                status_code = e.response.status_code
+                # Don't retry on client errors except for rate limiting (429)
+                # and do retry on server errors (5xx)
+                if status_code < 500 and status_code != 429:
+                    raise e
             if (wait := next(sleepiter, None)) is not None:
                 log.warning(
                     "Request to %s failed due to %s: %s; sleeping for %f"
                     " seconds and retrying",
+                    url,
                     type(e).__name__,
                     str(e),
                     wait,
